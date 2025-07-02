@@ -11,9 +11,10 @@
 
 struct AESCryptedData
 {
-  unsigned char *data; // Pointer to the encrypted data
-  size_t length;      // Length of the encrypted data
-  unsigned char iv[16]; // Initialization vector used for encryption
+  unsigned char *data;  // Pointer to the encrypted data
+  size_t length;        // Length of the encrypted data
+  unsigned char *iv;    // Pointer to the IV (Initialization Vector)
+  // Note: The IV should be 16 bytes for AES CBC mode
 };
 
 class ESP32SimpleCrypto
@@ -39,8 +40,8 @@ public:
   int8_t aesInit(const String key = "");
   // String aesEncryptCbc(const String input, const String iv = "");
   // String aesDecryptCbc(const String input, const String iv = "");
-  int8_t aesEncryptCbc(const String input, AESCryptedData &crypted_data);
-  int8_t aesDecryptCbc(const AESCryptedData &crypted_data, String &output);
+  int8_t aesEncryptCbc(const String input, AESCryptedData *crypted_data);
+  int8_t aesDecryptCbc(const AESCryptedData *crypted_data, String &output);
   int8_t aesGenerateKey(const uint8_t key_len_bytes = 16); // Default is 128 bits (16 bytes)
   int8_t aesGetKey(String &key);
   int8_t aesSetKey(const String key);
@@ -60,6 +61,10 @@ public:
   int8_t rsaSetPrivateKeyPem(const String private_key_pem);
 
   void freeResources();
+
+  static String bytesToHex(const unsigned char *data, size_t length);
+  static unsigned char *hexToBytes(const String hexStr, size_t *length);
+  static String stringToHex(const String *input);
 };
 
 #endif

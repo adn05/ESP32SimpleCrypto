@@ -145,7 +145,7 @@ int8_t ESP32SimpleCrypto::aesGetKey(String &key)
         return -1; // AES key not initialized
     }
     key = String((const char *)aes_key, aes_key_len); // Convert AES key to String
-    return 0;                                         // Success
+    return 0;                                          // Success
 }
 
 int8_t ESP32SimpleCrypto::aesSetKey(const String key)
@@ -174,7 +174,7 @@ int8_t ESP32SimpleCrypto::aesSetKey(const String key)
     }
 }
 
-int8_t ESP32SimpleCrypto::aesEncryptCbc(const String input, AESCryptedData &output)
+int8_t ESP32SimpleCrypto::aesEncryptCbc(const String input, AESCryptedData *output)
 {
     if (!aes_ctx || !aes_key)
     {
@@ -187,49 +187,60 @@ int8_t ESP32SimpleCrypto::aesEncryptCbc(const String input, AESCryptedData &outp
     memset(input_data, 0, padded_len);            // Initialize with zeros
     memcpy(input_data, input.c_str(), input_len); // Copy input data
 
-    output.data = new unsigned char[padded_len]; // Allocate memory for encrypted data
-    output.length = padded_len;
+    output->data = new unsigned char[padded_len]; // Allocate memory for encrypted data
+    output->length = input_len;                   // Store original input length
+    // output->length = padded_len; // Store padded length for consistency
 
     unsigned char aes_iv[16]; // Initialization vector for AES CBC mode
-    if (generateRandomBytes(aes_iv, 16) != 0)
+    // If output->iv is not null, copy the IV from output->iv
+    if (output->iv == nullptr)
     {
-        delete[] input_data;
-        delete[] output.data;
-        return -3; // Failed to generate random IV
+        output->iv = new unsigned char[16]; // Allocate memory for IV in output structure
+        if (generateRandomBytes(aes_iv, 16) != 0)
+        {
+            delete[] input_data;
+            delete[] output->data;
+            return -3; // Failed to generate random IV
+        }
+        memcpy(output->iv, aes_iv, 16); // Copy the generated IV into output structure
+    }
+    else
+    {
+        memcpy(aes_iv, output->iv, 16); // Copy the existing IV into aes_iv
     }
 
-    if (mbedtls_aes_crypt_cbc(aes_ctx, MBEDTLS_AES_ENCRYPT, padded_len, aes_iv, input_data, output.data) != 0)
+    if (mbedtls_aes_crypt_cbc(aes_ctx, MBEDTLS_AES_ENCRYPT, padded_len, aes_iv, input_data, output->data) != 0)
     {
         delete[] input_data;
-        delete[] output.data;
+        delete[] output->data;
         return -2; // Encryption failed
     }
 
-    delete[] input_data;           // Free temporary input data
-    memcpy(output.iv, aes_iv, 16); // Copy IV to output
-    return 0;                      // Success
+    delete[] input_data; // Free temporary input data
+    return 0; // Success
 }
 
-int8_t ESP32SimpleCrypto::aesDecryptCbc(const AESCryptedData &input, String &output)
+int8_t ESP32SimpleCrypto::aesDecryptCbc(const AESCryptedData *input, String &output)
 {
-    if (!aes_ctx || !aes_key || input.length == 0 || !input.data)
+    if (!aes_ctx || !aes_key || input->length == 0 || !input->data)
     {
         return -1; // AES context, key, or input data not initialized
     }
 
-    unsigned char *decrypted_data = new unsigned char[input.length]; // Allocate memory for decrypted data
+    size_t padded_len = ((input->length + 15) / 16) * 16;          // Pad to multiple of 16 bytes
+    unsigned char *decrypted_data = new unsigned char[padded_len]; // Allocate memory for decrypted data
     unsigned char iv_copy[16];
-    memcpy(iv_copy, input.iv, 16); // Make a local copy of the IV
+    memcpy(iv_copy, input->iv, 16); // Make a local copy of the IV
 
-    if (mbedtls_aes_crypt_cbc(aes_ctx, MBEDTLS_AES_DECRYPT, input.length, iv_copy, input.data, decrypted_data) != 0)
+    if (mbedtls_aes_crypt_cbc(aes_ctx, MBEDTLS_AES_DECRYPT, padded_len, iv_copy, input->data, decrypted_data) != 0)
     {
         delete[] decrypted_data;
         return -2; // Decryption failed
     }
 
-    output = String((const char *)decrypted_data, input.length); // Convert decrypted data to String
-    delete[] decrypted_data;                                     // Free decrypted data memory
-    return 0;                                                    // Success
+    output = String((const char *)decrypted_data, input->length); // Convert decrypted data to String
+    delete[] decrypted_data;                                       // Free decrypted data memory
+    return 0;                                                      // Success
 }
 
 int8_t ESP32SimpleCrypto::sha256Init()
@@ -245,7 +256,7 @@ int8_t ESP32SimpleCrypto::sha256Init()
 // String ESP32SimpleCrypto::sha256Hash(const String input) {
 int8_t ESP32SimpleCrypto::sha256Hash(const String input, String &hash)
 {
-    sha256Init(); // Ensure SHA-256 context is initialized
+    sha256Init();                                                                         // Ensure SHA-256 context is initialized
     unsigned char hash_buf[32];                                                           // SHA-256 produces a 32-byte hash
     mbedtls_sha256_starts(sha_ctx, 0);                                                    // Start SHA-256 context
     mbedtls_sha256_update(sha_ctx, (const unsigned char *)input.c_str(), input.length()); // Update with input data
@@ -256,7 +267,7 @@ int8_t ESP32SimpleCrypto::sha256Hash(const String input, String &hash)
 }
 
 bool ESP32SimpleCrypto::sha256Verify(const String input, const String hash)
-{   
+{
     sha256Init(); // Ensure SHA-256 context is initialized
     if (hash.length() != 32)
     {
@@ -493,4 +504,41 @@ int8_t ESP32SimpleCrypto::rsaGenerateKeypairPem(size_t key_size)
     }
 
     return 0; // Success
+}
+
+String ESP32SimpleCrypto::bytesToHex(const unsigned char *data, size_t length)
+{
+    String hexStr;
+    for (size_t i = 0; i < length; ++i)
+    {
+        hexStr += (data[i] < 0x10 ? " 0" : " "); // Add leading zero for single digit hex
+        hexStr += String(data[i], HEX);
+    }
+    return hexStr;
+}
+
+unsigned char *ESP32SimpleCrypto::hexToBytes(const String hexStr, size_t *length)
+{
+    // Remove 0x prefix if present and spaces
+    String cleanHexStr = hexStr;
+    cleanHexStr.replace("0x", "");
+    cleanHexStr.replace(" ", "");
+    cleanHexStr.replace("\n", "");
+    cleanHexStr.replace("\r", "");
+    cleanHexStr.replace("\t", "");
+    cleanHexStr.toUpperCase(); // Convert to uppercase for consistency
+
+    *length = cleanHexStr.length() / 2; // Each byte is represented by two hex characters
+    unsigned char *bytes = new unsigned char[*length];
+    for (size_t i = 0; i < *length; ++i)
+    {
+        String byteStr = cleanHexStr.substring(i * 2, i * 2 + 2);
+        bytes[i] = (unsigned char)strtol(byteStr.c_str(), nullptr, 16);
+    }
+    return bytes;
+}
+
+String ESP32SimpleCrypto::stringToHex(const String *input)
+{
+    return bytesToHex((const unsigned char *)input->c_str(), input->length());
 }
